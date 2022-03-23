@@ -946,126 +946,109 @@ impl<P: ProtocolAdapter> DebugAdapter<P> {
             }
         };
 
-        if let Some(levels) = arguments.levels {
-            if let Some(start_frame) = arguments.start_frame {
-                // Determine the correct 'slice' of available [StackFrame]s to serve up ...
-                let total_frames = core_data.stack_frames.len() as i64;
+        let levels = arguments.levels.unwrap_or(0);
+        let start_frame = arguments.start_frame.unwrap_or(0);
 
-                // We need to copy some parts of StackFrame so that we can re-use it later without references to core_data.
-                struct PartialStackFrameData {
-                    id: i64,
-                    function_name: String,
-                    source_location: Option<SourceLocation>,
-                    pc: u32,
-                    is_inlined: bool,
-                }
+        // Determine the correct 'slice' of available [StackFrame]s to serve up ...
+        let total_frames = core_data.stack_frames.len() as i64;
 
-                let frame_set = if levels == 1 && start_frame == 0 {
-                    // Just the first frame - use the LHS of the split at `levels`
-                    core_data.stack_frames.split_at(levels as usize).0
-                } else if total_frames <= 20 && start_frame >= 0 && start_frame <= total_frames {
-                    // When we have less than 20 frames - use the RHS of of the split at `start_frame`
-                    core_data.stack_frames.split_at(start_frame as usize).1
-                } else if total_frames > 20 && start_frame + levels <= total_frames {
-                    // When we have more than 20 frames - we can safely split twice
-                    core_data
-                        .stack_frames
-                        .split_at(start_frame as usize)
-                        .1
-                        .split_at(levels as usize)
-                        .0
-                } else {
-                    return self.send_response::<()>(
-                        request,
-                        Err(DebuggerError::Other(anyhow!(
-                            "Request for stack trace failed with invalid arguments: {:?}",
-                            arguments
-                        ))),
-                    );
-                }
-                .iter()
-                .map(|stack_frame| PartialStackFrameData {
-                    id: stack_frame.id,
-                    function_name: stack_frame.function_name.clone(),
-                    source_location: stack_frame.source_location.clone(),
-                    pc: stack_frame.pc,
-                    is_inlined: stack_frame.is_inlined,
-                })
-                .collect::<Vec<PartialStackFrameData>>();
+        // We need to copy some parts of StackFrame so that we can re-use it later without references to core_data.
+        struct PartialStackFrameData {
+            id: i64,
+            function_name: String,
+            source_location: Option<SourceLocation>,
+            pc: u32,
+            is_inlined: bool,
+        }
 
-                let frame_list: Vec<StackFrame> = frame_set
-                    .iter()
-                    .map(|frame| {
-                        let column = frame
-                            .source_location
-                            .as_ref()
-                            .and_then(|sl| sl.column)
-                            .map(|col| match col {
-                                ColumnType::LeftEdge => 0,
-                                ColumnType::Column(c) => c,
-                            })
-                            .unwrap_or(0);
-
-                        let line = frame
-                            .source_location
-                            .as_ref()
-                            .and_then(|sl| sl.line)
-                            .unwrap_or(0) as i64;
-
-                        let function_display_name = if frame.is_inlined {
-                            format!("{} #[inline]", frame.function_name)
-                        } else {
-                            format!("{} @{:#010x}", frame.function_name, frame.pc)
-                        };
-
-                        // Create the appropriate [`dap_types::Source`] for the response
-                        let source = if let Some(source_location) = &frame.source_location {
-                            get_dap_source(source_location)
-                        } else {
-                            log::debug!("No source location present for frame!");
-                            None
-                        };
-
-                        // TODO: Can we add more meaningful info to `module_id`, etc.
-                        StackFrame {
-                            id: frame.id as i64,
-                            name: function_display_name,
-                            source,
-                            line,
-                            column: column as i64,
-                            end_column: None,
-                            end_line: None,
-                            module_id: None,
-                            presentation_hint: Some("normal".to_owned()),
-                            can_restart: Some(false),
-                            instruction_pointer_reference: Some(format!("{:#010x}", frame.pc)),
-                        }
-                    })
-                    .collect();
-
-                let body = StackTraceResponseBody {
-                    stack_frames: frame_list,
-                    total_frames: Some(total_frames),
-                };
-                self.send_response(request, Ok(Some(body)))
-            } else {
-                self.send_response::<()>(
-                    request,
-                    Err(DebuggerError::Other(anyhow!(
-                        "Request for stack trace failed with invalid start_frame argument: {:?}",
-                        arguments.start_frame
-                    ))),
-                )
-            }
+        let frame_set = if levels == 1 && start_frame == 0 {
+            // Just the first frame - use the LHS of the split at `levels`
+            core_data.stack_frames.split_at(levels as usize).0
+        } else if total_frames <= 20 && start_frame >= 0 && start_frame <= total_frames {
+            // When we have less than 20 frames - use the RHS of of the split at `start_frame`
+            core_data.stack_frames.split_at(start_frame as usize).1
+        } else if total_frames > 20 && start_frame + levels <= total_frames {
+            // When we have more than 20 frames - we can safely split twice
+            core_data
+                .stack_frames
+                .split_at(start_frame as usize)
+                .1
+                .split_at(levels as usize)
+                .0
         } else {
-            self.send_response::<()>(
+            return self.send_response::<()>(
                 request,
                 Err(DebuggerError::Other(anyhow!(
-                    "Request for stack trace failed with invalid levels argument: {:?}",
-                    arguments.levels
+                    "Request for stack trace failed with invalid arguments: {:?}",
+                    arguments
                 ))),
-            )
+            );
         }
+        .iter()
+        .map(|stack_frame| PartialStackFrameData {
+            id: stack_frame.id,
+            function_name: stack_frame.function_name.clone(),
+            source_location: stack_frame.source_location.clone(),
+            pc: stack_frame.pc,
+            is_inlined: stack_frame.is_inlined,
+        })
+        .collect::<Vec<PartialStackFrameData>>();
+
+        let frame_list: Vec<StackFrame> = frame_set
+            .iter()
+            .map(|frame| {
+                let column = frame
+                    .source_location
+                    .as_ref()
+                    .and_then(|sl| sl.column)
+                    .map(|col| match col {
+                        ColumnType::LeftEdge => 0,
+                        ColumnType::Column(c) => c,
+                    })
+                    .unwrap_or(0);
+
+                let line = frame
+                    .source_location
+                    .as_ref()
+                    .and_then(|sl| sl.line)
+                    .unwrap_or(0) as i64;
+
+                let function_display_name = if frame.is_inlined {
+                    format!("{} #[inline]", frame.function_name)
+                } else {
+                    format!("{} @{:#010x}", frame.function_name, frame.pc)
+                };
+
+                // Create the appropriate [`dap_types::Source`] for the response
+                let source = if let Some(source_location) = &frame.source_location {
+                    get_dap_source(source_location)
+                } else {
+                    log::debug!("No source location present for frame!");
+                    None
+                };
+
+                // TODO: Can we add more meaningful info to `module_id`, etc.
+                StackFrame {
+                    id: frame.id as i64,
+                    name: function_display_name,
+                    source,
+                    line,
+                    column: column as i64,
+                    end_column: None,
+                    end_line: None,
+                    module_id: None,
+                    presentation_hint: Some("normal".to_owned()),
+                    can_restart: Some(false),
+                    instruction_pointer_reference: Some(format!("{:#010x}", frame.pc)),
+                }
+            })
+            .collect();
+
+        let body = StackTraceResponseBody {
+            stack_frames: frame_list,
+            total_frames: Some(total_frames),
+        };
+        self.send_response(request, Ok(Some(body)))
     }
 
     /// Retrieve available scopes  
