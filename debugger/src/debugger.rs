@@ -1234,7 +1234,6 @@ impl Debugger {
                 download_options.do_chip_erase = self.debugger_options.full_chip_erase;
                 let flash_result = {
                     let rc_debug_adapter = Rc::new(RefCell::new(debug_adapter));
-                    let rc_debug_adapter_clone = rc_debug_adapter.clone();
                     let flash_result = {
                         struct ProgressState {
                             total_page_size: usize,
@@ -1255,6 +1254,7 @@ impl Debugger {
                         }));
 
                         let flash_progress = if let Some(id) = progress_id {
+                            let rc_debug_adapter_clone = rc_debug_adapter.clone();
                             FlashProgress::new(move |event| {
                                 let mut flash_progress = flash_progress.borrow_mut();
                                 let mut debug_adapter = rc_debug_adapter_clone.borrow_mut();
